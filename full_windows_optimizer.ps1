@@ -1,192 +1,214 @@
-# ================================
-# FULL ADVANCED WINDOWS OPTIMIZER SCRIPT
-# ================================
+<# 
+    Windows Performance & Privacy Optimizer
+    --------------------------------------
+    This script applies common performance, UI, and privacy tweaks
+    to reduce background activity and improve responsiveness.
 
-# Ensure script runs as Administrator
-if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator"))
-{
-    Write-Warning "Please run this script as Administrator!"
+    Requires Administrator privileges.
+#>
+
+# --- Admin check ---
+$principal = New-Object Security.Principal.WindowsPrincipal(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+)
+
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Warning "Administrator privileges are required."
     exit
 }
 
-Write-Host "Starting full system optimization..." -ForegroundColor Green
+Write-Host "Applying system optimizations..." -ForegroundColor Green
 
-# --- 1. Stop and disable SysMain (Superfetch/Prefetch) ---
-Try {
-    Stop-Service -Name "SysMain" -ErrorAction SilentlyContinue
-    Set-Service -Name "SysMain" -StartupType Disabled
-    Write-Host "SysMain (Prefetch) disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable SysMain: $_" }
+# -------------------------------------------------
+# Core performance services
+# -------------------------------------------------
 
-# --- 2. Clean temp files and Recycle Bin ---
-$tempPaths = @("$env:TEMP", "C:\Windows\Temp")
-foreach ($path in $tempPaths) {
-    Try {
-        Get-ChildItem -Path $path -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-    } Catch { Write-Warning "Failed to clean $path: $_" }
-}
+# Disable SysMain (Superfetch)
+try {
+    Stop-Service SysMain -ErrorAction SilentlyContinue
+    Set-Service SysMain -StartupType Disabled
+} catch {}
 
-Try { 
-    Clear-RecycleBin -Force -ErrorAction SilentlyContinue
-    Write-Host "Temporary files and Recycle Bin cleaned." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to clear Recycle Bin." }
+# Disable Windows Search indexing
+try {
+    Stop-Service WSearch -ErrorAction SilentlyContinue
+    Set-Service WSearch -StartupType Disabled
+} catch {}
 
-# --- 3. Disable unnecessary startup programs ---
-$unwantedStartups = @(
-    "OneDrive",
-    "Spotify",
-    "Adobe Acrobat Update"
-)
-foreach ($app in $unwantedStartups) {
-    Try {
-        $startup = Get-CimInstance Win32_StartupCommand | Where-Object {$_.Name -like "*$app*"}
-        foreach ($item in $startup) {
-            Invoke-CimMethod -InputObject $item -MethodName Delete
-            Write-Host "$app startup disabled." -ForegroundColor Cyan
-        }
-    } Catch { Write-Warning "Could not disable startup for $app." }
-}
+# -------------------------------------------------
+# Power & sleep behavior
+# -------------------------------------------------
 
-# --- 4. Disable safe unnecessary services ---
-$safeServices = @(
-    "Bluetooth Support Service",
-    "RemoteRegistry"
-)
-foreach ($svc in $safeServices) {
-    Try {
-        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-        Set-Service -Name $svc -StartupType Disabled
-        Write-Host "$svc disabled." -ForegroundColor Cyan
-    } Catch { Write-Warning "Could not disable $svc." }
-}
-
-# --- 5. Disable notifications ---
-Try {
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications" -Name "ToastEnabled" -PropertyType DWord -Value 0 -Force
-    Write-Host "Windows notifications disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable notifications." }
-
-# --- 6. Disable transparency ---
-Try {
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -PropertyType DWord -Value 0 -Force
-    Write-Host "Transparency disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable transparency." }
-
-# --- 7. Disable animations ---
-Try {
-    New-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "UserPreferencesMask" -PropertyType Binary -Value ([byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)) -Force
-    Write-Host "Animations disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable animations." }
-
-# --- 8. Disable snap window animations ---
-Try {
-    New-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "DragFullWindows" -PropertyType String -Value 0 -Force
-    Write-Host "Snap window animations disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable snap animations." }
-
-# --- 9. Disable background apps (can break some apps) ---
-Try {
-    Get-AppxPackage | ForEach-Object { Add-AppxPackage -register "$($_.InstallLocation)\AppXManifest.xml" -DisableDevelopmentMode }
-    Write-Host "Background apps disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable background apps." }
-
-# --- 10. Disable sleep / hibernate / fast startup / hybrid sleep ---
-Try {
-    powercfg -h off
+# Disable hibernation (also disables Fast Startup)
+try {
+    powercfg -h off | Out-Null
     powercfg -change -standby-timeout-ac 0
     powercfg -change -hibernate-timeout-ac 0
     powercfg -change -monitor-timeout-ac 0
-    Write-Host "Sleep, Hibernate, Fast Startup, and Hybrid Sleep disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable sleep modes." }
+} catch {}
 
-# --- 11. Disable telemetry and data collection ---
-Try {
-    # Disable telemetry via registry
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -Name "RestrictTelemetry" -Value 1 -Type DWord -Force
+# -------------------------------------------------
+# Visual & UI responsiveness
+# -------------------------------------------------
 
-    # Stop and disable telemetry services
-    Stop-Service -Name "DiagTrack" -ErrorAction SilentlyContinue
-    Set-Service -Name "DiagTrack" -StartupType Disabled
-    Stop-Service -Name "dmwappushservice" -ErrorAction SilentlyContinue
-    Set-Service -Name "dmwappushservice" -StartupType Disabled
+# Disable transparency
+Set-ItemProperty `
+    -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" `
+    -Name "EnableTransparency" `
+    -Type DWord `
+    -Value 0 `
+    -Force
 
-    # Disable Customer Experience Improvement Program
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\SQMClient\Windows" -Name "CEIPEnable" -Value 0 -Type DWord -Force
-    Write-Host "Telemetry and diagnostic data collection disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable telemetry." }
+# Disable animations and visual effects
+Set-ItemProperty `
+    -Path "HKCU:\Control Panel\Desktop" `
+    -Name "UserPreferencesMask" `
+    -Type Binary `
+    -Value ([byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)) `
+    -Force
 
-# --- 12. Disable telemetry scheduled tasks ---
-$tasks = @(
-    "\Microsoft\Windows\Application Experience\ProgramDataUpdater",
-    "\Microsoft\Windows\Autochk\Proxy",
-    "\Microsoft\Windows\Customer Experience Improvement Program\Consolidator",
-    "\Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask",
-    "\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip",
-    "\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector",
-    "\Microsoft\Windows\Maintenance\WinSAT",
-    "\Microsoft\Windows\WDI\ResolutionHost"
+# Disable window drag previews
+Set-ItemProperty `
+    -Path "HKCU:\Control Panel\Desktop" `
+    -Name "DragFullWindows" `
+    -Type String `
+    -Value "0" `
+    -Force
+
+# -------------------------------------------------
+# Notifications & background behavior
+# -------------------------------------------------
+
+# Disable toast notifications
+Set-ItemProperty `
+    -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications" `
+    -Name "ToastEnabled" `
+    -Type DWord `
+    -Value 0 `
+    -Force
+
+# Disable background apps (Store apps may lose functionality)
+try {
+    Get-AppxPackage | ForEach-Object {
+        Add-AppxPackage `
+            -Register "$($_.InstallLocation)\AppXManifest.xml" `
+            -DisableDevelopmentMode `
+            -ErrorAction SilentlyContinue
+    }
+} catch {}
+
+# -------------------------------------------------
+# Telemetry & data collection
+# -------------------------------------------------
+
+# Registry telemetry policy
+New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
+Set-ItemProperty `
+    -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" `
+    -Name "AllowTelemetry" `
+    -Type DWord `
+    -Value 0 `
+    -Force
+
+# Disable telemetry services
+$telemetryServices = @(
+    "DiagTrack",
+    "dmwappushservice"
 )
-foreach ($task in $tasks) {
-    Try {
-        Disable-ScheduledTask -TaskPath (Split-Path $task) -TaskName (Split-Path $task -Leaf) -ErrorAction SilentlyContinue
-        Write-Host "Disabled scheduled task: $task" -ForegroundColor Cyan
-    } Catch { Write-Warning "Failed to disable task $task." }
+
+foreach ($service in $telemetryServices) {
+    try {
+        Stop-Service $service -ErrorAction SilentlyContinue
+        Set-Service $service -StartupType Disabled
+    } catch {}
 }
 
-# --- 13. Disable Windows Update service ---
-Try {
-    Stop-Service -Name "wuauserv" -ErrorAction SilentlyContinue
-    Set-Service -Name "wuauserv" -StartupType Disabled
-    Write-Host "Windows Update disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable Windows Update." }
+# Disable CEIP
+Set-ItemProperty `
+    -Path "HKLM:\SOFTWARE\Microsoft\SQMClient\Windows" `
+    -Name "CEIPEnable" `
+    -Type DWord `
+    -Value 0 `
+    -Force
 
-# --- 14. Disable Xbox services ---
-Try {
-    $xboxServices = @(
-        "XblAuthManager",
-        "XblGameSave",
-        "XboxGipSvc",
-        "XboxNetApiSvc"
-    )
-    foreach ($svc in $xboxServices) {
-        Stop-Service -Name $svc -ErrorAction SilentlyContinue
-        Set-Service -Name $svc -StartupType Disabled
-        Write-Host "Disabled Xbox service: $svc" -ForegroundColor Cyan
-    }
-} Catch { Write-Warning "Failed to disable Xbox services." }
+# -------------------------------------------------
+# Advertising, tracking & personalization
+# -------------------------------------------------
 
-# --- 15. Enable Game Mode ---
-Try {
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\GameBar" -Name "AllowAutoGameMode" -Value 1 -Type DWord -Force
-    Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\GameBar" -Name "AllowAutoGameMode" -Value 1 -Type DWord -Force
-    Write-Host "Game Mode enabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to enable Game Mode." }
+# Disable advertising ID
+Set-ItemProperty `
+    -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" `
+    -Name "Enabled" `
+    -Type DWord `
+    -Value 0 `
+    -Force
 
-# --- 16. Disable ads and advertising ID ---
-Try {
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ActivityFeed" -Name "PublishUserActivities" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SystemPaneSuggestionsEnabled" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338388Enabled" -Value 0 -Type DWord -Force
-    Write-Host "Advertising ID, Activity Feed, and system ads disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable ads and telemetry." }
+# Disable activity history / timeline
+Set-ItemProperty `
+    -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ActivityFeed" `
+    -Name "PublishUserActivities" `
+    -Type DWord `
+    -Value 0 `
+    -Force
 
-# --- 17. Disable Windows Search Indexing ---
-Try {
-    Stop-Service -Name "WSearch" -ErrorAction SilentlyContinue
-    Set-Service -Name "WSearch" -StartupType Disabled
-    Write-Host "Windows Search indexing disabled." -ForegroundColor Cyan
-} Catch { Write-Warning "Failed to disable search indexing." }
+# Disable system suggestions & ads
+$cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+Set-ItemProperty $cdm "SystemPaneSuggestionsEnabled" 0 -Type DWord -Force
+Set-ItemProperty $cdm "SubscribedContent-338388Enabled" 0 -Type DWord -Force
 
-# --- 18. Optimize CPU priority for foreground apps (optional) ---
-Try {
-    # This is an advanced tweak and might not be needed for all systems
-    # Registry tweak placeholder (no direct documented key for this)
-    Write-Host "CPU priority optimization skipped (requires manual tuning)." -ForegroundColor Yellow
-} Catch { Write-Warning "Failed to optimize CPU priority." }
+# -------------------------------------------------
+# Xbox & gaming background services
+# -------------------------------------------------
 
-# --- 19. Timer resolution tweak notice ---
-Write-Host "Timer resolution tweak requires advanced API calls and is skipped in this script." -ForegroundColor Yellow
+$xboxServices = @(
+    "XblAuthManager",
+    "XblGameSave",
+    "XboxGipSvc",
+    "XboxNetApiSvc"
+)
 
-Write-Host "✅ Full advanced optimization completed. Some changes require restart to apply." -ForegroundColor Green
+foreach ($service in $xboxServices) {
+    try {
+        Stop-Service $service -ErrorAction SilentlyContinue
+        Set-Service $service -StartupType Disabled
+    } catch {}
+}
+
+# Enable Game Mode
+Set-ItemProperty `
+    -Path "HKLM:\SOFTWARE\Microsoft\GameBar" `
+    -Name "AllowAutoGameMode" `
+    -Type DWord `
+    -Value 1 `
+    -Force
+
+# -------------------------------------------------
+# Windows Update (use with caution)
+# -------------------------------------------------
+
+try {
+    Stop-Service wuauserv -ErrorAction SilentlyContinue
+    Set-Service wuauserv -StartupType Disabled
+} catch {}
+
+# -------------------------------------------------
+# Cleanup
+# -------------------------------------------------
+
+# Temporary files
+$cleanupPaths = @(
+    "$env:TEMP",
+    "C:\Windows\Temp"
+)
+
+foreach ($path in $cleanupPaths) {
+    try {
+        Get-ChildItem $path -Recurse -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
+
+# Recycle Bin
+try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue } catch {}
+
+Write-Host "Optimization complete. A restart is recommended." -ForegroundColor Green
